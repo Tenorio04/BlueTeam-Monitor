@@ -122,3 +122,4 @@ if(Test-Path $LogFile){
 
 Write-Host "[REPORTE] report.txt generado correctamente" -ForegroundColor Cyan
 
+# Wazuh SIEM Integration Complete
