@@ -1,15 +1,12 @@
-# Logs
+# Output generado por el monitor
 logs/
+reports/
 *.log
 
-# Reports
-reports/
-*.txt
-*.csv
+# Muestras p?blicas permitidas
+!samples/*.log
 
-# VS Code
+# Editor / SO
 .vscode/
-
-# Windows
 Thumbs.db
 Desktop.ini

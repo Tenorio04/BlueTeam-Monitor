@@ -1,0 +1,3 @@
+May 26 23:02:00 LAB-PC BlueTeamMonitor: type=failed_logon src_ip=203.0.113.50 count=8 window_min=5 severity=high
+May 26 23:02:00 LAB-PC BlueTeamMonitor: type=failed_logon src_ip=203.0.113.77 count=2 window_min=5 severity=low
+May 26 23:02:01 LAB-PC BlueTeamMonitor: type=user_created new_user=testuser created_by=labadmin
