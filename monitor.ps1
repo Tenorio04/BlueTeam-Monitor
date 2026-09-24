@@ -1,125 +1,50 @@
-Write-Host "Blue Team Monitor iniciado..." -ForegroundColor Green
+﻿#Requires -RunAsAdministrator
+param(
+    [int]$WindowMinutes = 5,
+    [int]$Threshold     = 5
+)
 
-$LogFile = ".\logs\security_log.txt"
+$LogDir  = Join-Path $PSScriptRoot 'logs'
+$LogFile = Join-Path $LogDir 'events.log'
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
-$AlertCount = 0
-
-function Save-Alert {
-
-    param($Message)
-
-    $Date = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-
-    "$Date : $Message" | Out-File -Append $LogFile
-
-    Write-Host "[ALERTA] $Message" -ForegroundColor Red
-
-    $script:AlertCount++
+function Write-SecEvent {
+    param([string]$Type, [hashtable]$Fields)
+    # Syslog-style timestamp; invariant culture so the month is "May", not "mayo"
+    $ts = (Get-Date).ToString('MMM dd HH:mm:ss', [cultureinfo]::InvariantCulture)
+    $kv = ($Fields.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ' '
+    "$ts $env:COMPUTERNAME BlueTeamMonitor: type=$Type $kv" |
+        Out-File -Append -Encoding utf8 $LogFile
 }
 
-# Buscar eventos de intentos fallidos de login
+function Get-SecEvents {
+    param([int]$Id, [datetime]$Since)
+    try {
+        Get-WinEvent -FilterHashtable @{ LogName='Security'; Id=$Id; StartTime=$Since } -ErrorAction Stop
+    }
+    catch {
+        if ($_.FullyQualifiedErrorId -like '*NoMatchingEventsFound*') { return @() }
+        throw   # any other error (permissions, missing log) is surfaced
+    }
+}
 
-try {
+$since  = (Get-Date).AddMinutes(-$WindowMinutes)
+$alerts = 0
 
-    $FailedLogins = Get-WinEvent -FilterHashtable @{
-        LogName='Security'
-        ID=4625
-    } -MaxEvents 10 -ErrorAction Stop
-
-    if($FailedLogins){
-
-        Save-Alert "Se detectaron $($FailedLogins.Count) intentos fallidos de inicio de sesión"
-
+# 4625: failed logons, grouped by source IP
+Get-SecEvents -Id 4625 -Since $since |
+    ForEach-Object { [pscustomobject]@{ User = $_.Properties[5].Value; Ip = $_.Properties[19].Value } } |
+    Group-Object Ip |
+    ForEach-Object {
+        $sev = if ($_.Count -ge $Threshold) { 'high' } else { 'low' }
+        Write-SecEvent 'failed_logon' @{ src_ip=$_.Name; count=$_.Count; window_min=$WindowMinutes; severity=$sev }
+        if ($sev -eq 'high') { $alerts++ }
     }
 
-}
-catch{
-
-    Write-Host "No hay intentos fallidos detectados"
-
-}
-
-# Detectar creación de usuarios
-
-try {
-
-    $NewUsers = Get-WinEvent -FilterHashtable @{
-        LogName='Security'
-        ID=4720
-    } -MaxEvents 5 -ErrorAction SilentlyContinue
-
-    if($NewUsers){
-
-        Save-Alert "Se detectó creación de usuario(s) reciente(s)"
-
-    }
-    else{
-
-        Write-Host "No hay nuevos usuarios"
-
-    }
-
-}
-catch{
-
-    Write-Host "No hay eventos de creación de usuarios"
+# 4720: local account creation
+Get-SecEvents -Id 4720 -Since $since | ForEach-Object {
+    Write-SecEvent 'user_created' @{ new_user=$_.Properties[0].Value; created_by=$_.Properties[4].Value }
+    $alerts++
 }
 
-
-# Verificar si hubo alertas
-
-if($AlertCount -eq 0){
-
-    Write-Host "[OK] No se detectaron alertas" -ForegroundColor Green
-
-    $Date = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-
-    "$Date : Sistema revisado - Sin alertas" | Out-File -Append $LogFile
-}
-
-# =============================
-# Generación automática de reporte
-# =============================
-
-$ReportFile = ".\reports\report.txt"
-
-$Date = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-
-# Crear encabezado del reporte
-@"
-====================================
-BLUE TEAM SECURITY REPORT
-====================================
-
-Fecha: $Date
-Alertas detectadas: $AlertCount
-
-Resumen:
-"@ | Out-File $ReportFile
-
-# Agregar información según el resultado
-
-if($AlertCount -gt 0){
-
-    "Estado: ALERTAS DETECTADAS" | Out-File -Append $ReportFile
-
-}
-else{
-
-    "Estado: SIN ALERTAS" | Out-File -Append $ReportFile
-
-}
-
-"`nEventos registrados:`n" | Out-File -Append $ReportFile
-
-# Agregar contenido del log si existe
-
-if(Test-Path $LogFile){
-
-    Get-Content $LogFile | Out-File -Append $ReportFile
-
-}
-
-Write-Host "[REPORTE] report.txt generado correctamente" -ForegroundColor Cyan
-
-# Wazuh SIEM Integration Complete
+Write-Host "Check complete. High-severity alerts: $alerts"
